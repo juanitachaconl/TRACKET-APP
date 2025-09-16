@@ -33,5 +33,5 @@ Permite guardar registros en CSV, editarlos, generar métricas rápidas, gráfic
 Clona el repositorio y entra a la carpeta:
 
 ```bash
-git clone <URL-del-repo>
+git clone <https://github.com/juanitachaconl/TRACKET-APP/edit/main>
 cd TRACKET-APP
