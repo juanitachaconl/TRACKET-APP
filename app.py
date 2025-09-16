@@ -1,183 +1,235 @@
-
 import os
-import time
-import requests
+import io
 import pandas as pd
 import streamlit as st
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from datetime import date
 
-NOTION_TOKEN = st.secrets.get("NOTION_TOKEN", os.getenv("NOTION_TOKEN", ""))
-NOTION_DB_ID = st.secrets.get("NOTION_DB_ID", os.getenv("NOTION_DB_ID", ""))
+CSV_PATH = "reading_log.csv"
 
-NOTION_VERSION = "2022-06-28"
-NOTION_HEADERS = {
-    "Authorization": f"Bearer {NOTION_TOKEN}",
-    "Notion-Version": NOTION_VERSION,
-    "Content-Type": "application/json"
-}
-
-LOCAL_CSV = "reading_log.csv"
-
-st.set_page_config(page_title="Lectura • Tracker", page_icon="📚", layout="centered")
-
+st.set_page_config(page_title="Tracker de Lectura", page_icon="📚", layout="centered")
 st.markdown("# 📚 Tracker de Lectura")
-st.caption("Registra tu progreso en cualquier dispositivo. Si configuras Notion, los datos se guardan en tu base de datos.")
+st.caption("Registra tu lectura en 1 minuto. Guarda en CSV y edita")
 
-with st.expander("🔧 Estado de conexión"):
-    if NOTION_TOKEN and NOTION_DB_ID:
-        st.success("Conectado a Notion (usa los secretos `NOTION_TOKEN` y `NOTION_DB_ID`).")
-    else:
-        st.warning("Sin conexión a Notion. Guardaré localmente en `reading_log.csv`. Agrega secretos para sincronizar.")
-
-def create_notion_page(data):
-    if not (NOTION_TOKEN and NOTION_DB_ID):
-        return {"ok": False, "msg": "Notion no configurado; usando CSV local."}
-
-    # Notion properties mapping — deben existir en tu DB
-    payload = {
-        "parent": {"database_id": NOTION_DB_ID},
-        "properties": {
-            "Fecha": {"date": {"start": data["date"]}},
-            "Libro": {"title": [{"text": {"content": data["book"]}}]},
-            "Páginas": {"number": data["pages"]},
-            "Minutos": {"number": data["minutes"]},
-            "Estado": {"select": {"name": data["status"]}},
-            "Ánimo": {"select": {"name": data["mood"]}},
-        },
-        "children": [
-            {
-                "object": "block",
-                "type": "paragraph",
-                "paragraph": {"rich_text": [{"type": "text", "text": {"content": data["notes"] or ""}}]}
-            }
-        ]
-    }
+# --- utils ---
+def load_csv():
+    cols = ["Fecha","Libro","Páginas","Minutos","Ánimo","Momento","Notas"]
+    if not os.path.exists(CSV_PATH):
+        return pd.DataFrame(columns=cols)
     try:
-        r = requests.post("https://api.notion.com/v1/pages", headers=NOTION_HEADERS, json=payload, timeout=20)
-        if r.status_code in (200, 201):
-            return {"ok": True, "msg": "Guardado en Notion ✅"}
-        else:
-            return {"ok": False, "msg": f"Error Notion {r.status_code}: {r.text[:200]}"}
-    except Exception as e:
-        return {"ok": False, "msg": f"Excepción Notion: {e}"}
-
-def notion_query(limit=50):
-    if not (NOTION_TOKEN and NOTION_DB_ID):
-        return []
-    try:
-        r = requests.post(f"https://api.notion.com/v1/databases/{NOTION_DB_ID}/query",
-                          headers=NOTION_HEADERS, json={"page_size": limit}, timeout=20)
-        r.raise_for_status()
-        return r.json().get("results", [])
+        df = pd.read_csv(CSV_PATH)
     except Exception:
-        return []
+        return pd.DataFrame(columns=cols)
 
-with st.form("entry"):
-    col1, col2 = st.columns(2)
-    with col1:
-        book = st.text_input("Libro", placeholder="Título del libro", help="Ej: 'Thinking, Fast and Slow'")
-        date = st.date_input("Fecha")
-        pages = st.number_input("Páginas leídas", min_value=0, step=1)
-    with col2:
-        minutes = st.number_input("Minutos", min_value=0, step=5)
-        status = st.selectbox("Estado", ["Leyendo", "Terminado", "Releyendo", "Abandonado"])
-        mood = st.selectbox("Ánimo", ["Enfocada", "Relajada", "Cansada", "Apurada", "Neutral"])
-    notes = st.text_area("Notas (opcional)", placeholder="Qué aprendiste / highlights / citas...")
+    for c in cols:
+        if c not in df.columns:
+            df[c] = "" if c in ["Libro","Ánimo","Momento","Notas","Fecha"] else 0
+    return df[cols]
 
-    submitted = st.form_submit_button("➕ Registrar")
+def save_csv(df):
+    df.to_csv(CSV_PATH, index=False, encoding="utf-8")
 
-if submitted:
+def save_current_book(book):
     if not book:
-        st.error("Pon al menos el nombre del libro.")
+        return
+    with open(".last_book.txt","w",encoding="utf-8") as f:
+        f.write(book)
+
+def load_current_book():
+    try:
+        with open(".last_book.txt","r",encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+# --- formulario exprés (nuevo registro) ---
+st.markdown("## ➕ Nuevo registro")
+colA, colB = st.columns(2)
+with colA:
+    fecha = st.date_input("Fecha", value=date.today())
+with colB:
+    default_book = load_current_book()
+    libro = st.text_input("Libro", value=default_book, placeholder="Título del libro")
+
+col1, col2 = st.columns(2)
+with col1:
+    paginas = st.number_input("Páginas leídas", min_value=0, step=1, value=0)
+with col2:
+    minutos = st.number_input("Minutos", min_value=0, step=5, value=0)
+
+col3, col4 = st.columns(2)
+with col3:
+    animo = st.selectbox("Ánimo", ["Enfocada","Relajada","Cansada","Apurada","Neutral","Ansiosa","Enojada"], index=0)
+
+momento = st.radio("¿Fue en la mañana o tarde?", ["AM","PM"], horizontal=True)
+notas = st.text_area("Notas (opcional)", placeholder="Highlights, ideas, citas...")
+
+if st.button("✅ Guardar registro", use_container_width=True):
+    if not libro:
+        st.error("Escribe el nombre del libro.")
+    elif paginas <= 0 and minutos <= 0:
+        st.error("Ingresa al menos páginas o minutos.")
     else:
-        row = {
-            "date": str(date),
-            "book": book.strip(),
-            "pages": int(pages),
-            "minutes": int(minutes),
-            "status": status,
-            "mood": mood,
-            "notes": notes.strip()
+        df = load_csv()
+        new_row = {
+            "Fecha": str(fecha),
+            "Libro": libro.strip(),
+            "Páginas": int(paginas),
+            "Minutos": int(minutos),
+            "Ánimo": animo,
+            "Momento": momento,
+            "Notas": notas.strip(),
         }
-        # Try Notion
-        res = create_notion_page(row)
-        if not res["ok"]:
-            # Fallback local CSV
-            exists = os.path.exists(LOCAL_CSV)
-            df = pd.DataFrame([row])
-            if exists:
-                df.to_csv(LOCAL_CSV, mode="a", header=False, index=False, encoding="utf-8")
-            else:
-                df.to_csv(LOCAL_CSV, index=False, encoding="utf-8")
-            st.info(res["msg"] + " También guardado en CSV local.")
-        else:
-            st.success(res["msg"])
+        df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+        save_csv(df)
+        save_current_book(libro.strip())
+        st.success("Registro guardado en reading_log.csv")
+        st.rerun()
 
-st.markdown("## 📈 Dashboard rápido")
-# Build dataframe from Notion or CSV
-def load_df():
-    # Try Notion first
-    results = notion_query(limit=200)
-    rows = []
-    if results:
-        for r in results:
-            props = r.get("properties", {})
-            def g(p, t, default=None):
-                try:
-                    if t == "title":
-                        return props[p]["title"][0]["plain_text"]
-                    if t == "date":
-                        return props[p]["date"]["start"]
-                    if t == "number":
-                        return props[p]["number"]
-                    if t == "select":
-                        return props[p]["select"]["name"]
-                except Exception:
-                    return default
-            rows.append({
-                "Fecha": g("Fecha", "date", ""),
-                "Libro": g("Libro", "title", ""),
-                "Páginas": g("Páginas", "number", 0),
-                "Minutos": g("Minutos", "number", 0),
-                "Estado": g("Estado", "select", ""),
-                "Ánimo": g("Ánimo", "select", ""),
-            })
-        if rows:
-            return pd.DataFrame(rows)
-    # Fallback CSV
-    if os.path.exists(LOCAL_CSV):
-        df = pd.read_csv(LOCAL_CSV)
-        df.rename(columns={"date":"Fecha","book":"Libro","pages":"Páginas","minutes":"Minutos",
-                           "status":"Estado","mood":"Ánimo"}, inplace=True)
-        return df
-    return pd.DataFrame(columns=["Fecha","Libro","Páginas","Minutos","Estado","Ánimo"])
+# --- dashboard ---
+st.markdown("## 📊 Dashboard")
+df = load_csv()
 
-df = load_df()
 if df.empty:
     st.info("Aún no hay registros.")
 else:
-    # Show table
-    st.dataframe(df.sort_values("Fecha", ascending=False), use_container_width=True)
-
     # KPIs
-    colA, colB, colC = st.columns(3)
-    with colA:
-        st.metric("Total páginas", int(df["Páginas"].fillna(0).sum()))
-    with colB:
-        st.metric("Total minutos", int(df["Minutos"].fillna(0).sum()))
-    with colC:
-        dias = df["Fecha"].nunique()
-        st.metric("Días con lectura", int(dias))
+    dias_habito = df["Fecha"].nunique()
+    meses_habito = round(dias_habito/30, 1)
+    prom_paginas = round(pd.to_numeric(df["Páginas"], errors="coerce").fillna(0).sum()/dias_habito, 1) if dias_habito>0 else 0
+    libros_leidos = df["Libro"].nunique()
 
-    # Simple chart: pages by date
+    colK1, colK2, colK3, colK4, colK5 = st.columns(5)
+    with colK1: st.metric("Total páginas", int(pd.to_numeric(df["Páginas"], errors="coerce").fillna(0).sum()))
+    with colK2: st.metric("Días con hábito", dias_habito)
+    with colK3: st.metric("≈ Meses", meses_habito)
+    with colK4: st.metric("Prom. páginas/día", prom_paginas)
+    with colK5: st.metric("Libros distintos", libros_leidos)
+
+    # --- Gráficas AM vs PM ---
     try:
-        import matplotlib.pyplot as plt
-        df_plot = df.copy()
-        df_plot["Fecha"] = pd.to_datetime(df_plot["Fecha"], errors="coerce")
-        df_plot = df_plot.dropna(subset=["Fecha"])
-        daily = df_plot.groupby("Fecha")[["Páginas","Minutos"]].sum().sort_index()
-        st.markdown("### Progreso por día")
-        fig = plt.figure()
-        daily["Páginas"].plot(marker="o")
-        st.pyplot(fig)
+        dfx = df.copy()
+        dfx["Fecha"] = pd.to_datetime(dfx["Fecha"], errors="coerce")
+        dfx["Páginas"] = pd.to_numeric(dfx["Páginas"], errors="coerce").fillna(0).astype(int)
+        daily = dfx.dropna(subset=["Fecha"]).groupby(["Fecha","Momento"])["Páginas"].sum().unstack().fillna(0)
+
+        st.markdown("### Progreso por día (AM vs PM)")
+        colG1, colG2 = st.columns(2)
+
+        with colG1:
+            fig1, ax1 = plt.subplots()
+            daily["AM"].plot(marker="o", ax=ax1, title="Lecturas AM")
+            ax1.xaxis.set_major_formatter(mdates.DateFormatter("%d-%m"))
+            plt.xticks(rotation=45)
+            st.pyplot(fig1)
+
+        with colG2:
+            fig2, ax2 = plt.subplots()
+            daily["PM"].plot(marker="o", ax=ax2, title="Lecturas PM", color="orange")
+            ax2.xaxis.set_major_formatter(mdates.DateFormatter("%d-%m"))
+            plt.xticks(rotation=45)
+            st.pyplot(fig2)
+
     except Exception as e:
         st.caption(f"No se pudo graficar: {e}")
+
+    # --- Heatmap con matplotlib (sin seaborn) ---
+# --- Heatmap Emoción vs Momento (suma de páginas) ---
+st.markdown("### 🔥 Heatmap: Emoción vs Momento (suma de páginas)")
+
+try:
+    dfx = df.copy()
+    dfx["Páginas"] = pd.to_numeric(dfx["Páginas"], errors="coerce").fillna(0).astype(int)
+
+    # tabla de frecuencias
+    tabla_cross = dfx.pivot_table(
+        values="Páginas",
+        index="Ánimo",
+        columns="Momento",
+        aggfunc="sum",
+        fill_value=0
+    )
+
+    fig, ax = plt.subplots(figsize=(5,4))
+    cax = ax.imshow(tabla_cross.values, cmap="YlOrRd", aspect="auto")
+
+    # etiquetas
+    ax.set_xticks(range(len(tabla_cross.columns)))
+    ax.set_xticklabels(tabla_cross.columns)
+    ax.set_yticks(range(len(tabla_cross.index)))
+    ax.set_yticklabels(tabla_cross.index)
+
+    # anotar valores en cada celda
+    for i in range(len(tabla_cross.index)):
+        for j in range(len(tabla_cross.columns)):
+            ax.text(j, i, int(tabla_cross.values[i, j]),
+                    ha="center", va="center", color="black", fontsize=9)
+
+    fig.colorbar(cax, ax=ax, label="Páginas")
+    ax.set_title("Páginas leídas por emoción y momento (AM/PM)")
+    st.pyplot(fig)
+
+except Exception as e:
+    st.caption(f"No se pudo generar el heatmap: {e}")
+# --- editar registros --- 
+# --- editar registros ---
+st.markdown("## ✏️ Editar registro existente")
+
+if not df.empty:
+    df_edit = df.copy().reset_index(drop=True)
+    df_edit["ID"] = df_edit.index.astype(str) + " | " + df_edit["Fecha"].astype(str) + " | " + df_edit["Libro"].astype(str)
+
+    selected = st.selectbox("Selecciona un registro para editar", options=df_edit["ID"])
+
+    if selected:
+        idx = int(selected.split(" | ")[0])
+        registro = df_edit.loc[idx]
+
+        fecha_edit = st.date_input("Fecha", value=pd.to_datetime(registro["Fecha"]).date(), key=f"edit_fecha_{idx}")
+        libro_edit = st.text_input("Libro", value=registro["Libro"], key=f"edit_libro_{idx}")
+        paginas_edit = st.number_input("Páginas", min_value=0, value=int(registro["Páginas"]), key=f"edit_paginas_{idx}")
+        minutos_edit = st.number_input("Minutos", min_value=0, value=int(registro["Minutos"]), key=f"edit_minutos_{idx}")
+
+        # asegurar que la emoción actual esté en la lista
+        emociones = ["Enfocada","Relajada","Cansada","Apurada","Neutral","Ansiosa","Enojada"]
+        if registro["Ánimo"] not in emociones:
+            emociones.append(registro["Ánimo"])
+        animo_edit = st.selectbox("Ánimo", emociones,
+                                  index=emociones.index(registro["Ánimo"]),
+                                  key=f"edit_animo_{idx}")
+
+        momento_edit = st.radio("Momento", ["AM","PM"],
+                                index=0 if registro["Momento"]=="AM" else 1,
+                                horizontal=True, key=f"edit_momento_{idx}")
+        notas_edit = st.text_area("Notas", value=registro["Notas"], key=f"edit_notas_{idx}")
+
+        if st.button("💾 Guardar cambios", use_container_width=True, key=f"save_{idx}"):
+            df.loc[idx, ["Fecha","Libro","Páginas","Minutos","Ánimo","Momento","Notas"]] = [
+                str(fecha_edit), libro_edit.strip(), paginas_edit, minutos_edit,
+                animo_edit, momento_edit, notas_edit.strip()
+            ]
+            save_csv(df)
+            st.success("Registro actualizado")
+            st.rerun()
+# --- tabla al final ---
+st.markdown("## 📋 Registros")
+if not df.empty:
+    st.dataframe(df.sort_values("Fecha", ascending=False), use_container_width=True)
+
+# --- descarga CSV ---
+st.markdown("## ⬇️ Descargar tu CSV")
+if not df.empty:
+    buf = io.StringIO()
+    df.to_csv(buf, index=False, encoding="utf-8")
+    st.download_button(
+        "Descargar reading_log.csv",
+        data=buf.getvalue(),
+        file_name="reading_log.csv",
+        mime="text/csv",
+        use_container_width=True
+    )
+else:
+    st.caption("Cuando registres tu primera lectura, podrás descargar el CSV aquí.")
+
+##streamlit run app.py
