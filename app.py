@@ -60,7 +60,7 @@ with col2:
 
 col3, col4 = st.columns(2)
 with col3:
-    animo = st.selectbox("Ánimo", ["Enfocada","Relajada","Cansada","Apurada","Neutral","Ansiosa","Enojada"], index=0)
+    animo = st.selectbox("Ánimo", ["Enfocada","Relajada","Cansada","Apurada","Neutral","Ansiosa","Enojada","Triste"], index=0)
 
 momento = st.radio("¿Fue en la mañana o tarde?", ["AM","PM"], horizontal=True)
 notas = st.text_area("Notas (opcional)", placeholder="Highlights, ideas, citas...")
@@ -94,88 +94,86 @@ df = load_csv()
 if df.empty:
     st.info("Aún no hay registros.")
 else:
-    # KPIs
-    dias_habito = df["Fecha"].nunique()
-    meses_habito = round(dias_habito/30, 1)
-    prom_paginas = round(pd.to_numeric(df["Páginas"], errors="coerce").fillna(0).sum()/dias_habito, 1) if dias_habito>0 else 0
-    libros_leidos = df["Libro"].nunique()
-
-    colK1, colK2, colK3, colK4, colK5 = st.columns(5)
-    with colK1: st.metric("Total páginas", int(pd.to_numeric(df["Páginas"], errors="coerce").fillna(0).sum()))
-    with colK2: st.metric("Días con hábito", dias_habito)
-    with colK3: st.metric("≈ Meses", meses_habito)
-    with colK4: st.metric("Prom. páginas/día", prom_paginas)
-    with colK5: st.metric("Libros distintos", libros_leidos)
-
-    # --- Gráficas AM vs PM ---
     try:
+        # KPIs
+        dias_habito = df["Fecha"].nunique()
+        meses_habito = round(dias_habito/30, 1)
+        prom_paginas = round(pd.to_numeric(df["Páginas"], errors="coerce").fillna(0).sum()/dias_habito, 1) if dias_habito>0 else 0
+        libros_leidos = df["Libro"].nunique()
+
+        colK1, colK2, colK3, colK4, colK5 = st.columns(5)
+        with colK1: st.metric("Total páginas", int(pd.to_numeric(df["Páginas"], errors="coerce").fillna(0).sum()))
+        with colK2: st.metric("Días con hábito", dias_habito)
+        with colK3: st.metric("≈ Meses", meses_habito)
+        with colK4: st.metric("Prom. páginas/día", prom_paginas)
+        with colK5: st.metric("Libros distintos", libros_leidos)
+
+        # --- Gráficas AM vs PM ---
         dfx = df.copy()
         dfx["Fecha"] = pd.to_datetime(dfx["Fecha"], errors="coerce")
         dfx["Páginas"] = pd.to_numeric(dfx["Páginas"], errors="coerce").fillna(0).astype(int)
         daily = dfx.dropna(subset=["Fecha"]).groupby(["Fecha","Momento"])["Páginas"].sum().unstack().fillna(0)
 
-        st.markdown("### Progreso por día (AM vs PM)")
-        colG1, colG2 = st.columns(2)
+        if not daily.empty:
+            st.markdown("### Progreso por día (AM vs PM)")
+            colG1, colG2 = st.columns(2)
 
-        with colG1:
-            fig1, ax1 = plt.subplots()
-            daily["AM"].plot(marker="o", ax=ax1, title="Lecturas AM")
-            ax1.xaxis.set_major_formatter(mdates.DateFormatter("%d-%m"))
-            plt.xticks(rotation=45)
-            st.pyplot(fig1)
+            with colG1:
+                if "AM" in daily:
+                    fig1, ax1 = plt.subplots()
+                    daily["AM"].plot(marker="o", ax=ax1, title="Lecturas AM")
+                    ax1.xaxis.set_major_formatter(mdates.DateFormatter("%d-%m"))
+                    plt.xticks(rotation=45)
+                    st.pyplot(fig1)
 
-        with colG2:
-            fig2, ax2 = plt.subplots()
-            daily["PM"].plot(marker="o", ax=ax2, title="Lecturas PM", color="orange")
-            ax2.xaxis.set_major_formatter(mdates.DateFormatter("%d-%m"))
-            plt.xticks(rotation=45)
-            st.pyplot(fig2)
+            with colG2:
+                if "PM" in daily:
+                    fig2, ax2 = plt.subplots()
+                    daily["PM"].plot(marker="o", ax=ax2, title="Lecturas PM", color="orange")
+                    ax2.xaxis.set_major_formatter(mdates.DateFormatter("%d-%m"))
+                    plt.xticks(rotation=45)
+                    st.pyplot(fig2)
 
     except Exception as e:
-        st.caption(f"No se pudo graficar: {e}")
+        st.error(f"No se pudo generar dashboard: {e}")
 
-    # --- Heatmap con matplotlib (sin seaborn) ---
-# --- Heatmap Emoción vs Momento (suma de páginas) ---
+# --- Heatmap Emoción vs Momento ---
 st.markdown("### 🔥 Heatmap: Emoción vs Momento (suma de páginas)")
-
 try:
-    dfx = df.copy()
-    dfx["Páginas"] = pd.to_numeric(dfx["Páginas"], errors="coerce").fillna(0).astype(int)
+    if not df.empty:
+        dfx = df.copy()
+        dfx["Páginas"] = pd.to_numeric(dfx["Páginas"], errors="coerce").fillna(0).astype(int)
 
-    # tabla de frecuencias
-    tabla_cross = dfx.pivot_table(
-        values="Páginas",
-        index="Ánimo",
-        columns="Momento",
-        aggfunc="sum",
-        fill_value=0
-    )
+        tabla_cross = dfx.pivot_table(
+            values="Páginas",
+            index="Ánimo",
+            columns="Momento",
+            aggfunc="sum",
+            fill_value=0
+        )
 
-    fig, ax = plt.subplots(figsize=(5,4))
-    cax = ax.imshow(tabla_cross.values, cmap="YlOrRd", aspect="auto")
+        if not tabla_cross.empty:
+            fig, ax = plt.subplots(figsize=(5,4))
+            cax = ax.imshow(tabla_cross.values, cmap="YlOrRd", aspect="auto")
 
-    # etiquetas
-    ax.set_xticks(range(len(tabla_cross.columns)))
-    ax.set_xticklabels(tabla_cross.columns)
-    ax.set_yticks(range(len(tabla_cross.index)))
-    ax.set_yticklabels(tabla_cross.index)
+            ax.set_xticks(range(len(tabla_cross.columns)))
+            ax.set_xticklabels(tabla_cross.columns)
+            ax.set_yticks(range(len(tabla_cross.index)))
+            ax.set_yticklabels(tabla_cross.index)
 
-    # anotar valores en cada celda
-    for i in range(len(tabla_cross.index)):
-        for j in range(len(tabla_cross.columns)):
-            ax.text(j, i, int(tabla_cross.values[i, j]),
-                    ha="center", va="center", color="black", fontsize=9)
+            for i in range(len(tabla_cross.index)):
+                for j in range(len(tabla_cross.columns)):
+                    ax.text(j, i, int(tabla_cross.values[i, j]),
+                            ha="center", va="center", color="black", fontsize=9)
 
-    fig.colorbar(cax, ax=ax, label="Páginas")
-    ax.set_title("Páginas leídas por emoción y momento (AM/PM)")
-    st.pyplot(fig)
-
+            fig.colorbar(cax, ax=ax, label="Páginas")
+            ax.set_title("Páginas leídas por emoción y momento (AM/PM)")
+            st.pyplot(fig)
 except Exception as e:
-    st.caption(f"No se pudo generar el heatmap: {e}")
-# --- editar registros --- 
+    st.error(f"No se pudo generar el heatmap: {e}")
+
 # --- editar registros ---
 st.markdown("## ✏️ Editar registro existente")
-
 if not df.empty:
     df_edit = df.copy().reset_index(drop=True)
     df_edit["ID"] = df_edit.index.astype(str) + " | " + df_edit["Fecha"].astype(str) + " | " + df_edit["Libro"].astype(str)
@@ -186,23 +184,28 @@ if not df.empty:
         idx = int(selected.split(" | ")[0])
         registro = df_edit.loc[idx]
 
-        fecha_edit = st.date_input("Fecha", value=pd.to_datetime(registro["Fecha"]).date(), key=f"edit_fecha_{idx}")
-        libro_edit = st.text_input("Libro", value=registro["Libro"], key=f"edit_libro_{idx}")
-        paginas_edit = st.number_input("Páginas", min_value=0, value=int(registro["Páginas"]), key=f"edit_paginas_{idx}")
-        minutos_edit = st.number_input("Minutos", min_value=0, value=int(registro["Minutos"]), key=f"edit_minutos_{idx}")
+        # validación de fecha segura
+        try:
+            fecha_val = pd.to_datetime(registro["Fecha"]).date()
+        except Exception:
+            fecha_val = date.today()
 
-        # asegurar que la emoción actual esté en la lista
-        emociones = ["Enfocada","Relajada","Cansada","Apurada","Neutral","Ansiosa","Enojada"]
+        fecha_edit = st.date_input("Fecha", value=fecha_val, key=f"edit_fecha_{idx}")
+        libro_edit = st.text_input("Libro", value=str(registro["Libro"]), key=f"edit_libro_{idx}")
+        paginas_edit = st.number_input("Páginas", min_value=0, value=int(registro["Páginas"]) if pd.notnull(registro["Páginas"]) else 0, key=f"edit_paginas_{idx}")
+        minutos_edit = st.number_input("Minutos", min_value=0, value=int(registro["Minutos"]) if pd.notnull(registro["Minutos"]) else 0, key=f"edit_minutos_{idx}")
+
+        emociones = ["Enfocada","Relajada","Cansada","Apurada","Neutral","Ansiosa","Enojada","Triste"]
         if registro["Ánimo"] not in emociones:
             emociones.append(registro["Ánimo"])
         animo_edit = st.selectbox("Ánimo", emociones,
-                                  index=emociones.index(registro["Ánimo"]),
+                                  index=emociones.index(registro["Ánimo"]) if registro["Ánimo"] in emociones else 0,
                                   key=f"edit_animo_{idx}")
 
         momento_edit = st.radio("Momento", ["AM","PM"],
                                 index=0 if registro["Momento"]=="AM" else 1,
                                 horizontal=True, key=f"edit_momento_{idx}")
-        notas_edit = st.text_area("Notas", value=registro["Notas"], key=f"edit_notas_{idx}")
+        notas_edit = st.text_area("Notas", value=str(registro["Notas"]), key=f"edit_notas_{idx}")
 
         if st.button("💾 Guardar cambios", use_container_width=True, key=f"save_{idx}"):
             df.loc[idx, ["Fecha","Libro","Páginas","Minutos","Ánimo","Momento","Notas"]] = [
@@ -212,6 +215,7 @@ if not df.empty:
             save_csv(df)
             st.success("Registro actualizado")
             st.rerun()
+
 # --- tabla al final ---
 st.markdown("## 📋 Registros")
 if not df.empty:
@@ -231,5 +235,4 @@ if not df.empty:
     )
 else:
     st.caption("Cuando registres tu primera lectura, podrás descargar el CSV aquí.")
-
 ##streamlit run app.py
